@@ -381,6 +381,83 @@ fn filter_paeth(a: u8, b: u8, c: u8) -> u8 {
     }
 }
 
+fn filter_paeth_autovec<const N: usize>(a: [u8; N], b: [u8; N], c: [u8; N]) -> [u8; N] {
+    // This is an optimized version of the paeth filter from the PNG specification, proposed by
+    // Luca Versari for [FPNGE](https://www.lucaversari.it/FJXL_and_FPNGE.pdf). It operates
+    // entirely on unsigned 8-bit quantities, making it more conducive to vectorization.
+    //
+    //     p = a + b - c
+    //     pa = |p - a| = |a + b - c - a| = |b - c| = max(b, c) - min(b, c)
+    //     pb = |p - b| = |a + b - c - b| = |a - c| = max(a, c) - min(a, c)
+    //     pc = |p - c| = |a + b - c - c| = |(b - c) + (a - c)| = ...
+    //
+    // We then explicitly unroll these calculations to make them vectorize better
+
+    let pa = simd_sub(simd_max(b, c), simd_min(c, b));
+    let pb = simd_sub(simd_max(a, c), simd_min(c, a));
+
+    let mut pc = simd_sub(simd_max(pa, pb), simd_min(pa, pb));
+    for (i, o) in pc.iter_mut().enumerate() {
+        if (a[i] < c[i]) != (c[i] < b[i]) {
+            *o = 255;
+        }
+    }
+
+    let mut crit_1 = [false; N];
+    for (i, o) in crit_1.iter_mut().enumerate() {
+        if pa[i] <= pb[i] && pa[i] <= pc[i] {
+            *o = true;
+        }
+    }
+
+    let crit_2 = [false; N];
+    for (i, o) in crit_1.iter_mut().enumerate() {
+        if pb[i] <= pc[i] {
+            *o = true;
+        }
+    }
+
+    let mut out = [0; N];
+    for (i, o) in out.iter_mut().enumerate() {
+        if crit_1[i] {
+            *o = a[i];
+        } else if crit_2[i] {
+            *o = b[i];
+        } else {
+            *o = c[i];
+        }
+    }
+
+    out
+}
+
+#[inline]
+fn simd_max<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
+    let mut out = [0; N];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = a[i].max(b[i])
+    }
+    out
+}
+
+#[inline]
+fn simd_min<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
+    let mut out = [0; N];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = a[i].min(b[i])
+    }
+    out
+}
+
+#[inline]
+fn simd_sub<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
+    let mut out = [0; N];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = a[i] - b[i]
+    }
+    out
+}
+
 pub(crate) fn unfilter(
     mut filter: FilterType,
     tbpp: BytesPerPixel,
@@ -1008,8 +1085,13 @@ fn filter_internal(
                 .zip(&mut b_chunks)
                 .zip(&mut c_chunks)
             {
+                let paeth_result: [u8; CHUNK_SIZE] = filter_paeth_autovec(
+                    a.try_into().unwrap(),
+                    b.try_into().unwrap(),
+                    c.try_into().unwrap(),
+                );
                 for i in 0..CHUNK_SIZE {
-                    out[i] = cur[i].wrapping_sub(filter_paeth(a[i], b[i], c[i]));
+                    out[i] = cur[i].wrapping_sub(paeth_result[i]);
                 }
             }
 
