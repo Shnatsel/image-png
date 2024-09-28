@@ -5,6 +5,7 @@
 
 use std::convert::TryInto;
 
+#[inline(always)]
 /// This is an equivalent of the `PaethPredictor` function from
 /// [the spec](http://www.libpng.org/pub/png/spec/1.2/PNG-Filters.html#Filter-type-4-Paeth)
 /// except that it simultaneously calculates the predictor for all SIMD lanes.
@@ -16,13 +17,17 @@ use std::convert::TryInto;
 /// - RGB  => 4 lanes of `i16x4` contain R, G, B, and a ignored 4th value
 ///
 /// The SIMD algorithm below is based on [`libpng`](https://github.com/glennrp/libpng/blob/f8e5fa92b0e37ab597616f554bee254157998227/intel/filter_sse2_intrinsics.c#L261-L280).
-fn paeth_predictor<const N: usize>(
-    a: [i16; N],
-    b: [i16; N],
-    c: [i16; N],
-) -> [i16; N] {
-    let mut out = [0; N];
-    for i in 0..N {
+/// 
+/// So, funny thing: rustc will only autovectorize this with width 8 or longer.
+/// Width 4 (which we actually would like) results in scalar code with pathetic performance.
+/// That's why we hardcode 8 instead of making it a const generic.
+fn paeth_predictor(
+    a: [i16; 8],
+    b: [i16; 8],
+    c: [i16; 8],
+) -> [i16; 8] {
+    let mut out = [0; 8];
+    for i in 0..8 {
         out[i] = super::filter_paeth_decode_i16(a[i].into(), b[i].into(), c[i].into());
     }
     out.into()
@@ -30,40 +35,34 @@ fn paeth_predictor<const N: usize>(
 
 /// Memory of previous pixels (as needed to unfilter `FilterType::Paeth`).
 /// See also https://www.w3.org/TR/png/#filter-byte-positions
-struct PaethState<const N: usize> {
+#[derive(Default)]
+struct PaethState {
     /// Previous pixel in the previous row.
-    c: [i16; N],
+    c: [i16; 8],
 
     /// Previous pixel in the current row.
-    a: [i16; N],
+    a: [i16; 8],
 }
 
-// derive doesn't like const generics, so we hand-roll this
-impl<const N: usize> Default for PaethState<N> {
-    fn default() -> Self {
-        PaethState {
-            c: [0; N],
-            a: [0; N],
-        }
-    }
-}
-
-
+#[inline(always)]
 /// Mutates `x` as needed to unfilter `FilterType::Paeth`.
 ///
 /// `b` is the current pixel in the previous row.  `x` is the current pixel in the current row.
 /// See also https://www.w3.org/TR/png/#filter-byte-positions
-fn paeth_step<const N: usize>(state: &mut PaethState<N>, b: [u8; N], x: &mut [u8; N]) {
+fn paeth_step<const N: usize>(state: &mut PaethState, b: [u8; N], x: &mut [u8; N]) {
     // Storing the inputs.
-    let b = b.map(|x| x as i16);
+    let mut our_b: [i16; 8] = [0; 8];
+    our_b[..N].iter_mut().zip(b).for_each(|(our, b)| *our = b as i16);
 
     // Calculating the new value of the current pixel.
-    let predictor = paeth_predictor(state.a, b, state.c);
+    let predictor = paeth_predictor(state.a, our_b, state.c);
     x.iter_mut().zip(predictor).for_each(|(x, p)| *x += p as u8);
 
     // Preparing for the next step.
-    state.c = b;
-    state.a = x.map(|x| x as i16);
+    state.c = our_b;
+    let mut new_a: [i16; 8] = [0; 8];
+    new_a[..N].iter_mut().zip(x).for_each(|(new, a)| *new = *a as i16);
+    state.a = new_a;
 }
 
 fn load3(src: &[u8]) -> [u8; 4] {
@@ -79,7 +78,7 @@ pub fn unfilter_paeth3(mut prev_row: &[u8], mut curr_row: &mut [u8]) {
     debug_assert_eq!(prev_row.len(), curr_row.len());
     debug_assert_eq!(prev_row.len() % 3, 0);
 
-    let mut state = PaethState::<4>::default();
+    let mut state = PaethState::default();
     while prev_row.len() >= 4 {
         // `u8x4` requires working with `[u8;4]`, but we can just load and ignore the first
         // byte from the next triple.  This optimization technique mimics the algorithm found
@@ -118,7 +117,7 @@ pub fn unfilter_paeth6(mut prev_row: &[u8], mut curr_row: &mut [u8]) {
     debug_assert_eq!(prev_row.len(), curr_row.len());
     debug_assert_eq!(prev_row.len() % 6, 0);
 
-    let mut state = PaethState::<8>::default();
+    let mut state = PaethState::default();
     while prev_row.len() >= 8 {
         // `u8x8` requires working with `[u8;8]`, but we can just load and ignore the first two
         // bytes from the next pixel.  This optimization technique mimics the algorithm found
