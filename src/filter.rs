@@ -49,44 +49,11 @@ mod simd {
     where
         LaneCount<N>: SupportedLaneCount,
     {
-        // Calculates the absolute difference between `a` and `b`.
-        fn abs_diff_simd<const N: usize>(a: Simd<u8, N>, b: Simd<u8, N>) -> Simd<u8, N>
-        where
-            LaneCount<N>: SupportedLaneCount,
-        {
-            a.simd_max(b) - b.simd_min(a)
+        let mut out = [0; N];
+        for i in 0..N {
+            out[i] = super::filter_paeth_decode(a[i].into(), b[i].into(), c[i].into());
         }
-
-        // Uses logic from `filter::filter_paeth` to calculate absolute values
-        // entirely in `Simd<u8, N>`. This method avoids unpacking and packing
-        // penalties resulting from conversion to and from `Simd<i16, N>`.
-        // ```
-        //     let pa = b.max(c) - c.min(b);
-        //     let pb = a.max(c) - c.min(a);
-        //     let pc = if (a < c) == (c < b) {
-        //         pa.max(pb) - pa.min(pb)
-        //     } else {
-        //         255
-        //     };
-        // ```
-        let pa = abs_diff_simd(b, c);
-        let pb = abs_diff_simd(a, c);
-        let pc = a
-            .simd_lt(c)
-            .simd_eq(c.simd_lt(b))
-            .select(abs_diff_simd(pa, pb), Simd::splat(255));
-
-        let smallest = pc.simd_min(pa.simd_min(pb));
-
-        // Paeth algorithm breaks ties favoring a over b over c, so we execute the following
-        // lane-wise selection:
-        //
-        //     if smalest == pa
-        //         then select a
-        //         else select (if smallest == pb then select b else select c)
-        smallest
-            .simd_eq(pa)
-            .select(a, smallest.simd_eq(pb).select(b, c))
+        out.into()
     }
 
     /// Memory of previous pixels (as needed to unfilter `FilterType::Paeth`).
