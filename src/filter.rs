@@ -7,7 +7,7 @@ use crate::common::BytesPerPixel;
 /// TODO(https://github.com/rust-lang/rust/issues/86656): Stop gating this module behind the
 /// "unstable" feature of the `png` crate.  This should be possible once the "portable_simd"
 /// feature of Rust gets stabilized.
-#[cfg(feature = "unstable")]
+//#[cfg(feature = "unstable")]
 mod simd {
     use std::simd::cmp::{SimdOrd, SimdPartialEq, SimdPartialOrd};
     use std::simd::num::{SimdInt, SimdUint};
@@ -32,25 +32,11 @@ mod simd {
     where
         LaneCount<N>: SupportedLaneCount,
     {
-        let pa = b - c; // (p-a) == (a+b-c - a) == (b-c)
-        let pb = a - c; // (p-b) == (a+b-c - b) == (a-c)
-        let pc = pa + pb; // (p-c) == (a+b-c - c) == (a+b-c-c) == (b-c)+(a-c)
-
-        let pa = pa.abs();
-        let pb = pb.abs();
-        let pc = pc.abs();
-
-        let smallest = pc.simd_min(pa.simd_min(pb));
-
-        // Paeth algorithm breaks ties favoring a over b over c, so we execute the following
-        // lane-wise selection:
-        //
-        //     if smalest == pa
-        //         then select a
-        //         else select (if smallest == pb then select b else select c)
-        smallest
-            .simd_eq(pa)
-            .select(a, smallest.simd_eq(pb).select(b, c))
+        let mut out = [0; N];
+        for i in 0..N {
+            out[i] = super::filter_paeth_decode_i16(a[i].into(), b[i].into(), c[i].into());
+        }
+        out.into()
     }
 
     /// Equivalent to `simd::paeth_predictor` but does not temporarily convert
@@ -325,6 +311,27 @@ fn filter_paeth_decode(a: u8, b: u8, c: u8) -> u8 {
     let pa = (i16::from(b) - i16::from(c)).abs();
     let pb = (i16::from(a) - i16::from(c)).abs();
     let pc = ((i16::from(a) - i16::from(c)) + (i16::from(b) - i16::from(c))).abs();
+
+    let mut out = a;
+    let mut min = pa;
+
+    if pb < min {
+        min = pb;
+        out = b;
+    }
+    if pc < min {
+        out = c;
+    }
+
+    out
+}
+
+
+fn filter_paeth_decode_i16(a: i16, b: i16, c: i16) -> i16 {
+    // Decoding seems to optimize better with this algorithm
+    let pa = (b - c).abs();
+    let pb = (a - c).abs();
+    let pc = ((a - c) + (b - c)).abs();
 
     let mut out = a;
     let mut min = pa;
