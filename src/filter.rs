@@ -5,6 +5,8 @@ use crate::common::BytesPerPixel;
 #[cfg(feature = "unstable")]
 mod simd;
 
+mod autovec;
+
 /// The byte level filter applied to scanlines to prepare them for compression.
 ///
 /// Compression in general benefits from repetitive data. The filter is a content-aware method of
@@ -68,6 +70,26 @@ fn filter_paeth_decode(a: u8, b: u8, c: u8) -> u8 {
     let pa = (i16::from(b) - i16::from(c)).abs();
     let pb = (i16::from(a) - i16::from(c)).abs();
     let pc = ((i16::from(a) - i16::from(c)) + (i16::from(b) - i16::from(c))).abs();
+
+    let mut out = a;
+    let mut min = pa;
+
+    if pb < min {
+        min = pb;
+        out = b;
+    }
+    if pc < min {
+        out = c;
+    }
+
+    out
+}
+
+fn filter_paeth_decode_i16(a: i16, b: i16, c: i16) -> i16 {
+    // Decoding seems to optimize better with this algorithm
+    let pa = (b - c).abs();
+    let pb = (a - c).abs();
+    let pc = ((a - c) + (b - c)).abs();
 
     let mut out = a;
     let mut min = pa;
@@ -494,7 +516,7 @@ pub(crate) fn unfilter(
                 }
                 BytesPerPixel::Three => {
                     #[cfg(feature = "unstable")]
-                    simd::unfilter_paeth3(previous, current);
+                    autovec::unfilter_paeth3(previous, current);
 
                     #[cfg(not(feature = "unstable"))]
                     {
@@ -553,7 +575,7 @@ pub(crate) fn unfilter(
                 }
                 BytesPerPixel::Six => {
                     #[cfg(feature = "unstable")]
-                    simd::unfilter_paeth6(previous, current);
+                    autovec::unfilter_paeth6(previous, current);
 
                     #[cfg(not(feature = "unstable"))]
                     {
