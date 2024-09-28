@@ -515,32 +515,7 @@ pub(crate) fn unfilter(
                     }
                 }
                 BytesPerPixel::Three => {
-                    #[cfg(feature = "unstable")]
                     autovec::unfilter_paeth3(previous, current);
-
-                    #[cfg(not(feature = "unstable"))]
-                    {
-                        let mut a_bpp = [0; 3];
-                        let mut c_bpp = [0; 3];
-                        for (chunk, b_bpp) in
-                            current.chunks_exact_mut(3).zip(previous.chunks_exact(3))
-                        {
-                            let new_chunk = [
-                                chunk[0].wrapping_add(filter_paeth_decode(
-                                    a_bpp[0], b_bpp[0], c_bpp[0],
-                                )),
-                                chunk[1].wrapping_add(filter_paeth_decode(
-                                    a_bpp[1], b_bpp[1], c_bpp[1],
-                                )),
-                                chunk[2].wrapping_add(filter_paeth_decode(
-                                    a_bpp[2], b_bpp[2], c_bpp[2],
-                                )),
-                            ];
-                            *TryInto::<&mut [u8; 3]>::try_into(chunk).unwrap() = new_chunk;
-                            a_bpp = new_chunk;
-                            c_bpp = b_bpp.try_into().unwrap();
-                        }
-                    }
                 }
                 BytesPerPixel::Four => {
                     #[cfg(feature = "unstable")]
@@ -574,41 +549,7 @@ pub(crate) fn unfilter(
                     }
                 }
                 BytesPerPixel::Six => {
-                    #[cfg(feature = "unstable")]
                     autovec::unfilter_paeth6(previous, current);
-
-                    #[cfg(not(feature = "unstable"))]
-                    {
-                        let mut a_bpp = [0; 6];
-                        let mut c_bpp = [0; 6];
-                        for (chunk, b_bpp) in
-                            current.chunks_exact_mut(6).zip(previous.chunks_exact(6))
-                        {
-                            let new_chunk = [
-                                chunk[0].wrapping_add(filter_paeth_decode(
-                                    a_bpp[0], b_bpp[0], c_bpp[0],
-                                )),
-                                chunk[1].wrapping_add(filter_paeth_decode(
-                                    a_bpp[1], b_bpp[1], c_bpp[1],
-                                )),
-                                chunk[2].wrapping_add(filter_paeth_decode(
-                                    a_bpp[2], b_bpp[2], c_bpp[2],
-                                )),
-                                chunk[3].wrapping_add(filter_paeth_decode(
-                                    a_bpp[3], b_bpp[3], c_bpp[3],
-                                )),
-                                chunk[4].wrapping_add(filter_paeth_decode(
-                                    a_bpp[4], b_bpp[4], c_bpp[4],
-                                )),
-                                chunk[5].wrapping_add(filter_paeth_decode(
-                                    a_bpp[5], b_bpp[5], c_bpp[5],
-                                )),
-                            ];
-                            *TryInto::<&mut [u8; 6]>::try_into(chunk).unwrap() = new_chunk;
-                            a_bpp = new_chunk;
-                            c_bpp = b_bpp.try_into().unwrap();
-                        }
-                    }
                 }
                 BytesPerPixel::Eight => {
                     #[cfg(feature = "unstable")]
