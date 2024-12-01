@@ -9,7 +9,6 @@ use crate::common::BytesPerPixel;
 /// feature of Rust gets stabilized.
 #[cfg(feature = "unstable")]
 mod simd {
-    use std::simd::cmp::{SimdOrd, SimdPartialEq, SimdPartialOrd};
     use std::simd::num::{SimdInt, SimdUint};
     use std::simd::{u8x4, u8x8, LaneCount, Simd, SimdElement, SupportedLaneCount};
 
@@ -35,33 +34,6 @@ mod simd {
         let mut out = [0; N];
         for i in 0..N {
             out[i] = super::filter_paeth_decode_i16(a[i].into(), b[i].into(), c[i].into());
-        }
-        out.into()
-    }
-
-    /// This is an equivalent of the `PaethPredictor` function from
-    /// [the spec](http://www.libpng.org/pub/png/spec/1.2/PNG-Filters.html#Filter-type-4-Paeth)
-    ///
-    /// Mapping between parameter names and pixel positions can be found in
-    /// [a diagram here](https://www.w3.org/TR/png/#filter-byte-positions).
-    ///
-    /// Examples of how different pixel types may be represented as multiple SIMD lanes:
-    /// - RGBA => 4 lanes of `i16x4` contain R, G, B, A
-    /// - RGB  => 4 lanes of `i16x4` contain R, G, B, and a ignored 4th value
-    ///
-    /// Functionally equivalent to `simd::paeth_predictor` but does not temporarily convert
-    /// the SIMD elements to `i16`.
-    fn paeth_predictor_u8<const N: usize>(
-        a: Simd<u8, N>,
-        b: Simd<u8, N>,
-        c: Simd<u8, N>,
-    ) -> Simd<u8, N>
-    where
-        LaneCount<N>: SupportedLaneCount,
-    {
-        let mut out = [0; N];
-        for i in 0..N {
-            out[i] = super::filter_paeth_decode(a[i].into(), b[i].into(), c[i].into());
         }
         out.into()
     }
@@ -104,24 +76,6 @@ mod simd {
         state.a = x.cast::<i16>();
     }
 
-    /// Computes the Paeth predictor without converting `u8` to `i16`.
-    ///
-    /// See `simd::paeth_step`.
-    fn paeth_step_u8<const N: usize>(
-        state: &mut PaethState<u8, N>,
-        b: Simd<u8, N>,
-        x: &mut Simd<u8, N>,
-    ) where
-        LaneCount<N>: SupportedLaneCount,
-    {
-        // Calculating the new value of the current pixel.
-        *x += paeth_predictor_u8(state.a, b, state.c);
-
-        // Preparing for the next step.
-        state.c = b;
-        state.a = *x;
-    }
-
     fn load3(src: &[u8]) -> u8x4 {
         u8x4::from_array([src[0], src[1], src[2], 0])
     }
@@ -159,30 +113,6 @@ mod simd {
         let mut x = load3(curr_row);
         paeth_step(&mut state, b, &mut x);
         store3(x, curr_row);
-    }
-
-    /// Undoes `FilterType::Paeth` for `BytesPerPixel::Four` and `BytesPerPixel::Eight`.
-    ///
-    /// This function calculates the Paeth predictor entirely in `Simd<u8, N>`
-    /// without converting to an intermediate `Simd<i16, N>`. Doing so avoids
-    /// paying a small performance penalty converting between types.
-    pub fn unfilter_paeth_u8<const N: usize>(prev_row: &[u8], curr_row: &mut [u8])
-    where
-        LaneCount<N>: SupportedLaneCount,
-    {
-        debug_assert_eq!(prev_row.len(), curr_row.len());
-        debug_assert_eq!(prev_row.len() % N, 0);
-        assert!(matches!(N, 4 | 8));
-
-        let mut state = PaethState::<u8, N>::default();
-        for (prev_row, curr_row) in prev_row.chunks_exact(N).zip(curr_row.chunks_exact_mut(N)) {
-            let b = Simd::from_slice(prev_row);
-            let mut x = Simd::from_slice(curr_row);
-
-            paeth_step_u8(&mut state, b, &mut x);
-
-            curr_row[..N].copy_from_slice(&x.to_array()[..N]);
-        }
     }
 
     fn load6(src: &[u8]) -> u8x8 {
@@ -749,10 +679,6 @@ pub(crate) fn unfilter(
                     }
                 }
                 BytesPerPixel::Four => {
-                    #[cfg(feature = "unstable")]
-                    simd::unfilter_paeth_u8::<4>(previous, current);
-
-                    #[cfg(not(feature = "unstable"))]
                     {
                         let mut a_bpp = [0; 4];
                         let mut c_bpp = [0; 4];
@@ -817,10 +743,6 @@ pub(crate) fn unfilter(
                     }
                 }
                 BytesPerPixel::Eight => {
-                    #[cfg(feature = "unstable")]
-                    simd::unfilter_paeth_u8::<8>(previous, current);
-
-                    #[cfg(not(feature = "unstable"))]
                     {
                         let mut a_bpp = [0; 8];
                         let mut c_bpp = [0; 8];
